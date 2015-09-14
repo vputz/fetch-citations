@@ -1,6 +1,7 @@
 (ns fetch-citations.core
   (:use net.cgrand.enlive-html)
   (require [riemann.client :as riemann])
+  (require [clojure.data.json :as json])
   (require [clojure.edn :as edn]))
 (import [java.net URLEncoder])
 
@@ -42,3 +43,11 @@
            {:host "vagrant" :service (str "cites-" doi) :metric cites})
         (deref 5000 ::timeout))))
     
+(defn read-config [filename]
+  (json/read-str (slurp filename)))
+
+(defn pairs-from-config [config]
+  "Reads a map of keys->[dois] and returns pairs of (key, doi)"
+  (for [kv config
+        y (second kv)]
+    [(first kv) y]))
