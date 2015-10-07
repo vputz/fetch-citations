@@ -5,7 +5,7 @@
   (require [clojure.edn :as edn]))
 (import [java.net URLEncoder])
 
-(def test-doi "10.1039/C0SM00164C")
+(def test-doi "10.1039/C0SM00164Cy")
 
 (defn scholar-query-url [doi]
   (str "http://scholar.google.com/scholar?q=" 
@@ -21,33 +21,42 @@
                               .getContent)]
     (html-resource inputstream)))
 
-(defn citation-div [urlres]
+(defn citation-text [urlres]
   "Given an enlive url resource, grab the scholar div with id 'gs_ab_md'"
-  (let [text (select urlres [:div#gs_ab_md :> text-node])]
-    (apply str text)))
+  (let [text (select urlres [:div.gs_ri :div.gs_fl :a :> text-node])]
+    (apply str (filter #(.contains % "Cited by") text))))
 
 (defn citations [cit-div]
-  "Given a text string such as '2 results ' retrieves the 2"
-  (edn/read-string (last (re-find #"(\d+) results" cit-div))))
+  "Given a text string such as 'Cited by 2' retrieves the 2"
+  (edn/read-string (last (re-find #"Cited by (\d+)" cit-div))))
 
-(defn citations-from-doi [url]
-  (-> url
+(defn citations-from-doi [doi]
+  (-> doi
       url-resource
-      citation-div
+      citation-text
       citations))
 
-(defn send-riemann-report [doi host port]
-  (let [c (riemann/tcp-client {:host host :port port})
+(defn send-riemann-report [doi fetcher-host riemann-host riemann-port]
+  (let [c (riemann/tcp-client {:host riemann-host :port riemann-port})
         cites (citations-from-doi doi)]
     (-> c (riemann/send-event 
-           {:host "vagrant" :service (str "cites-" doi) :metric cites})
+           {:host fetcher-host :service (str "cites-" doi) :metric cites})
         (deref 5000 ::timeout))))
     
 (defn read-config [filename]
   (json/read-str (slurp filename)))
 
-(defn pairs-from-config [config]
+(defn doi-pairs-from-config [config]
   "Reads a map of keys->[dois] and returns pairs of (key, doi)"
-  (for [kv config
+  (for [kv (get config "dois")
         y (second kv)]
     [(first kv) y]))
+
+(defn fetch-results [config-filename]
+  (let [config (read-config config-filename) 
+        fetcher-host ((config "config") "fetcher-host")
+        riemann-host ((config "config") "riemann-host")
+        riemann-port ((config "config") "riemann-port")
+        doi-pairs (doi-pairs-from-config config)]
+    (map #(send-riemann-report (second %) fetcher-host riemann-host riemann-port) doi-pairs))
+  )
